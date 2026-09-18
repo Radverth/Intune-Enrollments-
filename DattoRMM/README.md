@@ -27,10 +27,48 @@ requirements are `login.microsoftonline.com` and `graph.microsoft.com`.
 
 ## Setup
 
-### 1. App registration
+Run `New-AutopilotBulkAppRegistration.ps1` once per tenant. It does everything in this
+section — app registration, permission, consent, certificate, and the Datto variable values —
+and writes the lot to a text file:
 
-Create a dedicated app registration for the RMM component with **one** application
-permission:
+```powershell
+# elevated, signed in as a Global Administrator of the target tenant
+.\New-AutopilotBulkAppRegistration.ps1
+
+# split the certificate if your Datto variable field caps input length
+.\New-AutopilotBulkAppRegistration.ps1 -ChunkSize 2000 -OutFile C:\Temp\autopilot-setup.txt
+```
+
+The output file has six sections: tenant/app identifiers, the permission and its consent
+state, the certificate details and `.pfx` password, the verification result, the Datto RMM
+variables as literal `Name=Value` lines ready to paste, and the next steps. It is ACL'd to
+Administrators and SYSTEM on creation, **and it contains the private key** — create the
+variables from it, then delete or vault it.
+
+Before writing the file the script proves the setup works: it acquires an app-only token with
+the certificate *and makes a real Autopilot read with it*, retrying while the role assignment
+propagates. Both halves matter — a token only proves the certificate is accepted, while the
+Graph call is what proves the permission actually landed. Finding that out here beats finding
+out from 200 failed RMM jobs. If the result file says the live read did not succeed, do not
+roll out.
+
+If consent had to be granted by hand afterwards, re-check without creating anything:
+
+```powershell
+.\New-AutopilotBulkAppRegistration.ps1 -VerifyOnly `
+    -TenantId <guid> -AppId <guid> -Thumbprint <thumbprint>
+```
+
+That distinguishes the two failure modes for you: no token at all points at the certificate
+or the IDs; a token but a failed read points at the permission.
+
+Useful switches: `-DisplayName`, `-CertPassword` (one is generated if you omit it),
+`-AdditionalPermission`, and `-RemoveCertificateFromStore` (deletes the certificate from the
+admin workstation after export — the output file then becomes the only copy).
+
+### Doing it manually instead
+
+The app registration needs exactly **one** application permission:
 
 - `DeviceManagementServiceConfig.ReadWrite.All` — covers the import, the already-registered
   pre-check, and the optional device rename.
@@ -40,14 +78,10 @@ avoid it: that one also holds `Device.ReadWrite.All` and
 `DeviceManagementManagedDevices.ReadWrite.All`, and this credential is going to be readable
 by everyone with access to your RMM.
 
-You can create the app registration with option 2 of the root tool and then remove the
-permissions this component does not need, or create it by hand in Entra ID and upload the
-certificate's public key under *Certificates & secrets*.
+### Producing the certificate variable on its own
 
-### 2. Produce the certificate variable
-
-Datto RMM cannot take a file as a variable, so the `.pfx` has to arrive as text. Generate it
-with the included helper, on a machine that has the certificate:
+`New-AutopilotBulkAppRegistration.ps1` already emits this. Use the standalone helper when the
+app registration already exists, or when you are rotating the certificate:
 
 ```powershell
 # Export straight out of the local machine store (elevated)
@@ -155,7 +189,9 @@ can only be contained:
   value is not immediately usable.
 - **Mask the variables** if your Datto RMM tier supports masked site/account variables.
 - **Use a short-lived certificate** and rotate it after a bulk campaign finishes. Rotation is
-  re-running the helper and updating the variable.
+  re-running the setup script and updating the variables.
+- **Delete the setup results file** once the variables exist. It contains the private key and
+  the `.pfx` password in plain text.
 - **Remove the variables** when the campaign is done.
 
 What the component itself does to limit exposure: the certificate is never imported into the
@@ -197,7 +233,14 @@ including Datto's blank-value placeholders, multi-part certificate reassembly, `
 handling on both the Windows PowerShell and PowerShell 7 header shapes, name-token expansion,
 hardware validation, and the result-block formatting.
 
+For `New-AutopilotBulkAppRegistration.ps1`: password generation, base64 chunking (including
+that the emitted variables rejoin to the original byte-for-byte), the report content in both
+the success and consent-failed shapes, and that its copy of the client-assertion code still
+produces a signature that verifies — the component must be a single self-contained file to be
+pasted into Datto, so that code is duplicated on purpose and is tested against drift.
+
 **Not verified**, because it needs Windows and a real tenant: the WMI hardware-hash retrieval,
-the live Graph import/poll/rename calls, the 32-bit relaunch, UDF writes, and Datto's own
-variable and result-field plumbing. Run it against one pilot device before pointing it at a
-site.
+the live Graph import/poll/rename calls, the 32-bit relaunch, UDF writes, Datto's own variable
+and result-field plumbing, and in the setup script the Graph app-registration/consent calls,
+`New-SelfSignedCertificate`, and the output file ACL. Run the setup script against a test
+tenant and the component against one pilot device before pointing either at a site.
