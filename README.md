@@ -125,7 +125,16 @@ line for any failure — the console only ever shows the readable summary.
 | Device does not appear in Intune | Autopilot device sync takes a few minutes; it is not instant. |
 | Script rejects `-CertificateThumbprint` | The installed `Get-WindowsAutopilotInfo` predates certificate auth. `Install-Script -Name Get-WindowsAutopilotInfo -Scope AllUsers -Force` |
 
+## Bulk enrollment via Datto RMM
+
+This tool is single-machine and interactive by design. For bulk enrollment across a site,
+see [`DattoRMM/`](DattoRMM/README.md) — a non-interactive component that takes the app
+registration details as RMM variables (including the certificate, as base64, since Datto RMM
+cannot accept file variables) and calls the Graph API directly with no module dependencies on
+the endpoint.
+
 ## Out of scope
 
-Bulk/remote enrollment of multiple devices, any GUI, and automatic dynamic-group creation
-for group-tag-based profile assignment.
+Any GUI, and automatic dynamic-group creation for group-tag-based profile assignment.
+Bulk enrollment is handled by the Datto RMM component described above rather than by this
+script.
